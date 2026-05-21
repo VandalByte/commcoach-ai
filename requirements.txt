@@ -1,0 +1,15 @@
+kokoro
+soundfile
+misaki[en]
+sounddevice
+faster-whisper
+silero-vad
+# torch torchvision --index-url https://download.pytorch.org/whl/cu128
+
+# For openrouter
+pydantic-ai-slim[openrouter]
+# For ollama
+pydantic-ai-slim[openai]
+# For groq
+pydantic-ai-slim[groq]
+python-dotenv

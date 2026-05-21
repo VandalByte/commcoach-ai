@@ -1,0 +1,56 @@
+# Example configuration file for the voice assistant application.
+# Copy this file to 'config.toml' and edit the values as needed.
+
+[user]
+name = "Alan"
+
+[agent]
+name = "Stella"
+
+[logging]
+level = "INFO" # DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+[llm]
+model = "openai/gpt-oss-20b"
+api_key_env = "GROQ_API_KEY"
+api_key = ""
+# system_prompt = "You are Stella, a concise and helpful voice assistant. Reply naturally for text-to-speech."
+
+[web_search]
+enabled = true
+max_results = 2
+max_content_length = 3000
+max_calls_per_reply = 1
+fetch_top_result = true
+
+[weather]
+enabled = true
+
+[tts]
+# Choose your TTS engine:
+# - "piper".
+# - "kokoro"
+engine = "kokoro"
+# Kokoro settings
+# See the below website to know more about available voices and languages:
+# Testing : https://huggingface.co/spaces/hexgrad/Kokoro-TTS
+# Docs    : https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md
+kokoro_lang_code = "a" # a = American English, b = British English
+kokoro_voice = "af_heart"
+kokoro_speed = 1.0
+kokoro_sample_rate = 24000
+
+[stt]
+model_size = "medium"  # tiny, small, medium, large-v3
+compute_type = "float16" # int8 (CPU), float16 (GPU)
+sample_rate = 16000
+language = "en"
+
+[silero_vad]
+threshold = 0.5
+min_speech_duration = 0.3
+min_silence_duration = 2.0
+end_of_utterance_silence = 2.0
+max_wait_for_speech = 5.0
+max_record_duration = 30.0
+post_response_cooldown = 0.0
