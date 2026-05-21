@@ -18,10 +18,6 @@ enabled = true
 
 [tts]
 engine = "kokoro"
-# Kokoro settings
-# See the below website to know more about available voices and languages:
-# Testing : https://huggingface.co/spaces/hexgrad/Kokoro-TTS
-# Docs    : https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md
 kokoro_lang_code = "a" # a = American English, b = British English
 kokoro_voice = "af_heart"
 kokoro_speed = 1.0
