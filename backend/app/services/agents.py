@@ -7,7 +7,14 @@ from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.groq import GroqProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 
+import asyncio
+import time
+
 from app.core.settings import settings
+
+from app.logger import get_logger
+
+logger = get_logger()
 
 
 class QuestionPack(BaseModel):
@@ -30,12 +37,20 @@ class FinalEval(BaseModel):
 ollama_provider = OpenAIProvider(base_url=settings.ollama_base_url, api_key="ollama")
 ollama_model = OpenAIModel(model_name=settings.ollama_model, provider=ollama_provider)
 
-try:
-    groq_provider = GroqProvider(api_key=settings.groq_api_key)
-    groq_model = GroqModel(settings.groq_model, provider=groq_provider)
-    model = FallbackModel(groq_model, ollama_model)
-except (UserError, ImportError):
+if settings.groq_api_key:
+    try:
+        groq_provider = GroqProvider(api_key=settings.groq_api_key)
+        groq_model = GroqModel(settings.groq_model, provider=groq_provider)
+        model = FallbackModel(groq_model, ollama_model)
+        logger.info("Agents: configured Groq + Ollama fallback model")
+    except (UserError, ImportError) as exc:
+        model = ollama_model
+        logger.warning(
+            "Agents: Groq unavailable, falling back to Ollama model", exc_info=exc
+        )
+else:
     model = ollama_model
+    logger.info("Agents: no GROQ_API_KEY configured, using Ollama model")
 
 question_agent = Agent(model=model, output_type=QuestionPack)
 answer_agent = Agent(model=model, output_type=AnswerEval)
@@ -49,7 +64,9 @@ def _clip_context(text: str, limit: int) -> str:
     return f"{cleaned[:limit]}..."
 
 
-async def generate_questions(interview_type: str, resume: str, jd: str, question_count: int) -> list[str]:
+async def generate_questions(
+    interview_type: str, resume: str, jd: str, question_count: int
+) -> list[str]:
     resume_context = _clip_context(resume, 7000)
     jd_context = _clip_context(jd, 5000)
     prompt = f"""
@@ -63,10 +80,23 @@ Rules:
 - Keep each question concise.
 """
     try:
-        result = await question_agent.run(prompt)
+        logger.info(
+            "Agents: generating questions",
+            extra={"interview_type": interview_type, "question_count": question_count},
+        )
+        result = await asyncio.wait_for(
+            question_agent.run(prompt), timeout=settings.llm_timeout_seconds
+        )
         questions = [q.strip() for q in result.output.questions if q.strip()]
+        logger.info("Agents: generated questions", extra={"count": len(questions)})
         return questions[:question_count]
+    except asyncio.TimeoutError:
+        logger.warning("Agents: question generation timed out, returning empty list")
+        return []
     except (FallbackExceptionGroup, ModelAPIError):
+        logger.exception(
+            "Agents: failed to generate questions, returning fallback empty list"
+        )
         return []
 
 
@@ -83,19 +113,53 @@ Return strict JSON with:
 
 Feedback should be practical and short. Grammar should call out the most important grammar or clarity issue, or say "Clear and grammatically sound" when appropriate.
 """
+    start = time.monotonic()
     try:
-        result = await answer_agent.run(prompt)
+        logger.info("Agents: evaluating answer")
+        result = await asyncio.wait_for(
+            answer_agent.run(prompt), timeout=settings.llm_timeout_seconds
+        )
+        elapsed = time.monotonic() - start
+        logger.info(
+            "Agents: answer evaluated",
+            extra={
+                "score": getattr(result.output, "score", None),
+                "elapsed_s": round(elapsed, 3),
+            },
+        )
         return result.output
+    except asyncio.TimeoutError:
+        elapsed = time.monotonic() - start
+        logger.warning(
+            "Agents: answer evaluation timed out, returning neutral fallback",
+            extra={
+                "elapsed_s": round(elapsed, 3),
+                "timeout_s": settings.llm_timeout_seconds,
+            },
+        )
+        return AnswerEval(
+            score=5,
+            feedback="AI evaluation timed out; this is a neutral fallback score.",
+            grammar=("Grammar was not evaluated because the model request timed out."),
+            suggestions=[
+                "Check model connectivity and consider increasing llm_timeout_seconds."
+            ],
+        )
     except (FallbackExceptionGroup, ModelAPIError):
+        logger.exception("Agents: answer evaluation failed, returning neutral fallback")
         return AnswerEval(
             score=5,
             feedback="I could not reach the AI evaluator, so this is a neutral fallback score.",
             grammar="Grammar was not evaluated because the model request failed.",
-            suggestions=["Check model connectivity, then retry this answer for richer coaching."],
+            suggestions=[
+                "Check model connectivity, then retry this answer for richer coaching."
+            ],
         )
 
 
-async def evaluate_final(questions: list[str], answers: list[str], scores: list[int]) -> FinalEval:
+async def evaluate_final(
+    questions: list[str], answers: list[str], scores: list[int]
+) -> FinalEval:
     qa_lines = "\n".join(
         f"Q: {q}\nA: {a}\nScore: {s}/10" for q, a, s in zip(questions, answers, scores)
     )
@@ -109,9 +173,12 @@ Return strict JSON:
 - plan: 5 actionable steps
 """
     try:
-        result = await final_agent.run(prompt)
+        result = await asyncio.wait_for(
+            final_agent.run(prompt), timeout=settings.llm_timeout_seconds
+        )
         return result.output
-    except (FallbackExceptionGroup, ModelAPIError):
+    except asyncio.TimeoutError:
+        logger.warning("Agents: final evaluation timed out, returning fallback summary")
         avg_score = round(sum(scores) / len(scores), 2) if scores else 0
         return FinalEval(
             strengths=[

@@ -6,6 +6,9 @@ from app.core.settings import settings
 from app.models.domain import InterviewSession
 from app.models.schemas import FinalReport
 from app.services.agents import evaluate_answer, evaluate_final, generate_questions
+from app.logger import get_logger
+
+logger = get_logger()
 
 
 class InterviewService:
@@ -22,17 +25,27 @@ class InterviewService:
         ]
 
         if interview_type == "technical":
-            common_questions[2] = "Explain a technical decision you made recently and the tradeoffs you considered."
+            common_questions[2] = (
+                "Explain a technical decision you made recently and the tradeoffs you considered."
+            )
         elif interview_type == "managerial":
-            common_questions[2] = "How do you prioritize work and communicate progress when multiple deadlines compete?"
+            common_questions[2] = (
+                "How do you prioritize work and communicate progress when multiple deadlines compete?"
+            )
         elif interview_type == "behavioral":
-            common_questions[2] = "Tell me about a time you received feedback and changed your approach."
+            common_questions[2] = (
+                "Tell me about a time you received feedback and changed your approach."
+            )
 
         return common_questions
 
-    async def create_session(self, interview_type: str, resume_text: str, jd_text: str) -> InterviewSession:
+    async def create_session(
+        self, interview_type: str, resume_text: str, jd_text: str
+    ) -> InterviewSession:
         session_id = str(uuid.uuid4())
-        requested_count = max(settings.questions_per_session, settings.min_questions_per_session)
+        requested_count = max(
+            settings.questions_per_session, settings.min_questions_per_session
+        )
 
         questions = await generate_questions(
             interview_type=interview_type,
@@ -49,8 +62,14 @@ class InterviewService:
 
         questions = questions[:requested_count]
 
-        session = InterviewSession(session_id=session_id, interview_type=interview_type, questions=questions)
+        session = InterviewSession(
+            session_id=session_id, interview_type=interview_type, questions=questions
+        )
         self.sessions[session_id] = session
+        logger.info(
+            "InterviewService: created session",
+            extra={"session_id": session_id, "question_count": len(questions)},
+        )
         return session
 
     def _calculate_delivery_metrics(
@@ -77,7 +96,9 @@ class InterviewService:
         }
         text = f" {answer.lower()} "
         fillers = sum(1 for word in words if word in filler_terms)
-        fillers += sum(text.count(f" {phrase} ") for phrase in filler_terms if " " in phrase)
+        fillers += sum(
+            text.count(f" {phrase} ") for phrase in filler_terms if " " in phrase
+        )
 
         minutes = max((duration_seconds or 0) / 60, 0.01)
         wpm = round(len(words) / minutes, 1) if duration_seconds else 0
@@ -100,7 +121,13 @@ class InterviewService:
         confidence_from_speech = int((speech_confidence or 0.78) * 100)
         confidence_score = max(
             0,
-            min(100, confidence_from_speech - fillers * 2 - long_pause_count * 5 - pace_penalty),
+            min(
+                100,
+                confidence_from_speech
+                - fillers * 2
+                - long_pause_count * 5
+                - pace_penalty,
+            ),
         )
 
         return {
@@ -122,7 +149,9 @@ class InterviewService:
         session = self.sessions[session_id]
         current_question = session.questions[session.current_index]
         eval_result = await evaluate_answer(current_question, answer)
-        metrics = self._calculate_delivery_metrics(answer, duration_seconds, long_pause_count, speech_confidence)
+        metrics = self._calculate_delivery_metrics(
+            answer, duration_seconds, long_pause_count, speech_confidence
+        )
         metrics.update(
             {
                 "grammar": eval_result.grammar,
@@ -139,6 +168,16 @@ class InterviewService:
         done = session.current_index >= len(session.questions)
         next_question = None if done else session.questions[session.current_index]
 
+        logger.info(
+            "InterviewService: submitted answer",
+            extra={
+                "session_id": session_id,
+                "question_index": session.current_index,
+                "score": eval_result.score,
+                "done": done,
+            },
+        )
+
         return {
             "feedback": eval_result.feedback,
             "score": eval_result.score,
@@ -153,7 +192,13 @@ class InterviewService:
         if not session.scores:
             raise ValueError("No answers submitted yet.")
 
-        summary = await evaluate_final(session.questions, session.answers, session.scores)
+        logger.info(
+            "InterviewService: generating final report",
+            extra={"session_id": session_id},
+        )
+        summary = await evaluate_final(
+            session.questions, session.answers, session.scores
+        )
         avg_score = round(sum(session.scores) / len(session.scores), 2)
 
         return FinalReport(

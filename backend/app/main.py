@@ -3,10 +3,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router as api_router
 from app.services.voice_tts import warmup_kokoro_background
+from app.logger import get_logger
+
+logger = get_logger()
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="CommCoach AI", version="0.1.0")
+
+    logger.info("Starting FastAPI app: CommCoach AI")
 
     app.add_middleware(
         CORSMiddleware,
@@ -24,7 +29,9 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def warmup_voice() -> None:
+        logger.info("Warmup: starting background TTS warmup task")
         warmup_kokoro_background()
+        logger.info("Warmup: TTS warmup task requested")
 
     return app
 

@@ -4,11 +4,20 @@ from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from app.models.schemas import AnswerRequest, AnswerResponse, FinalReport, SessionCreateResponse, SessionQuestionResponse
+from app.models.schemas import (
+    AnswerRequest,
+    AnswerResponse,
+    FinalReport,
+    SessionCreateResponse,
+    SessionQuestionResponse,
+)
 from app.services.interview import interview_service
 from app.services.parser import read_upload_text
 from app.services.voice_stt import transcribe_audio_bytes
 from app.services.voice_tts import synthesize_kokoro_wav, warmup_kokoro_background
+from app.logger import get_logger
+
+logger = get_logger()
 
 router = APIRouter()
 
@@ -21,7 +30,12 @@ def extract_candidate_name(resume_text: str) -> str | None:
     ignored = {"resume", "curriculum vitae", "cv", "profile", "summary"}
     for raw_line in resume_text.splitlines()[:12]:
         line = raw_line.strip()
-        if not line or line.lower() in ignored or "@" in line or any(char.isdigit() for char in line):
+        if (
+            not line
+            or line.lower() in ignored
+            or "@" in line
+            or any(char.isdigit() for char in line)
+        ):
             continue
         words = [word.strip(".,") for word in line.split()]
         if 1 < len(words) <= 4 and all(word[:1].isupper() for word in words if word):
@@ -40,15 +54,33 @@ async def create_session(
     parsed_resume = resume_text or ""
     parsed_jd = jd_text or ""
 
+    logger.info(
+        "API: create_session called",
+        extra={
+            "interview_type": interview_type,
+            "has_resume": bool(parsed_resume.strip()),
+            "has_jd": bool(parsed_jd.strip()),
+        },
+    )
+
     if resume_file is not None:
         parsed_resume = await read_upload_text(resume_file)
     if jd_file is not None:
         parsed_jd = await read_upload_text(jd_file)
 
     if not parsed_resume.strip() or not parsed_jd.strip():
-        raise HTTPException(status_code=400, detail="Resume and JD content are required.")
+        raise HTTPException(
+            status_code=400, detail="Resume and JD content are required."
+        )
 
-    session = await interview_service.create_session(interview_type, parsed_resume, parsed_jd)
+    session = await interview_service.create_session(
+        interview_type, parsed_resume, parsed_jd
+    )
+
+    logger.info(
+        "API: session created",
+        extra={"session_id": session.session_id, "questions": len(session.questions)},
+    )
 
     return SessionCreateResponse(
         session_id=session.session_id,
@@ -105,13 +137,17 @@ async def text_to_speech(payload: TTSRequest):
     try:
         audio = synthesize_kokoro_wav(payload.text)
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Kokoro TTS unavailable: {exc}") from exc
+        logger.exception("TTS synthesis failed")
+        raise HTTPException(
+            status_code=503, detail=f"Kokoro TTS unavailable: {exc}"
+        ) from exc
 
     return Response(content=audio, media_type="audio/wav")
 
 
 @router.post("/voice/warmup")
 async def warmup_text_to_speech():
+    logger.info("API: TTS warmup requested via API")
     warmup_kokoro_background()
     return {"status": "warming"}
 
@@ -124,9 +160,12 @@ async def speech_to_text(audio_file: UploadFile = File(...)):
     try:
         text = await run_in_threadpool(transcribe_audio_bytes, audio, suffix)
     except Exception as exc:
+        logger.exception("STT transcription failed")
         raise HTTPException(status_code=503, detail=f"STT unavailable: {exc}") from exc
 
     if not text:
-        raise HTTPException(status_code=422, detail="No speech was detected in the recording.")
+        raise HTTPException(
+            status_code=422, detail="No speech was detected in the recording."
+        )
 
     return {"text": text}
