@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic-settings
+pydantic-ai-slim[openai,groq]
+openai
+groq
+chromadb
+sentence-transformers
+pypdf
+kokoro
+soundfile
+faster-whisper
